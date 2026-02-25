@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import fastifyJwt from "@fastify/jwt";
+import fastifyJwt, { FastifyJWTOptions } from "@fastify/jwt";
 import { loadEnv } from "./env";
 import { logger } from "./logger";
 import { signalsRoutes } from "./signals";
@@ -20,26 +20,38 @@ app.register(rateLimit, {
   timeWindow: "1 minute",
 });
 
-app.register(fastifyJwt, {
+const jwtOptions: FastifyJWTOptions = {
   decode: { complete: true },
   verify: {
     allowedAud: env.JWT_AUDIENCE,
-    issuer: env.JWT_ISSUER,
+    allowedIss: env.JWT_ISSUER,
+  },
+  sign: {
+    iss: env.JWT_ISSUER,
+    aud: env.JWT_AUDIENCE,
   },
   secret: env.JWT_PUBLIC_KEY || "development-secret",
-});
+};
+
+app.register(fastifyJwt, jwtOptions);
 
 // Auth hook (replace with real key verification)
-app.decorate(
-  "authenticate",
-  async (request: any, reply: any) => {
-    try {
-      await request.jwtVerify();
-    } catch (err) {
-      reply.code(401).send({ error: "unauthorized" });
-    }
+app.decorate("authenticate", async (request, reply) => {
+  try {
+    await request.jwtVerify();
+  } catch {
+    reply.code(401).send({ error: "unauthorized" });
   }
-);
+});
+
+app.get("/token/example", async (request, reply) => {
+  const token = await reply.jwtSign({ sub: "example-user" });
+  return { token };
+});
+
+app.get("/verify/example", { preHandler: [app.authenticate] }, async (request) => {
+  return { user: request.user };
+});
 
 app.register(signalsRoutes, { prefix: "/signals" });
 
@@ -57,6 +69,12 @@ start();
 
 declare module "fastify" {
   interface FastifyInstance {
-    authenticate: any;
+    authenticate: (request: any, reply: any) => Promise<void>;
+  }
+}
+
+declare module "@fastify/jwt" {
+  interface FastifyJWT {
+    payload: { sub: string };
   }
 }
