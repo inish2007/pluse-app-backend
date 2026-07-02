@@ -1,4 +1,5 @@
 import { buildApp } from './app.js';
+import { initializeDatabase } from './db/pool.js';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -34,6 +35,8 @@ process.on('uncaughtException', (error) => {
 });
 
 const start = async () => {
+  await initializeDatabase();
+
   const app = buildApp();
 
   try {
