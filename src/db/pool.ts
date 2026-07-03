@@ -32,12 +32,18 @@ export const withTransaction = async <T>(callback: (client: any) => Promise<T>):
 };
 
 export const initializeDatabase = async (): Promise<void> => {
+  console.log("[DB] Connecting");
   const client = await pool.connect();
+  console.log("[DB] Connected");
   try {
+    console.log("[DB] Reading schema.sql");
     const schemaPath = resolve(dirname(fileURLToPath(import.meta.url)), 'schema.sql');
     const schemaSql = await readFile(schemaPath, 'utf8');
+    console.log("[DB] Executing schema.sql");
     await client.query(schemaSql);
+    console.log("[DB] Schema execution complete");
   } finally {
+    console.log("[DB] Client released");
     client.release();
   }
 };

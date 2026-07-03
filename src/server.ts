@@ -31,7 +31,7 @@ if (process.env.PORT && Number.isNaN(Number(process.env.PORT))) {
   process.exit(1);
 }
 
-const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const port = Number(process.env.PORT) || 3000;
 
 const logStartupError = (error: unknown) => {
   console.error('Startup failure:', error);
@@ -49,12 +49,18 @@ process.on('uncaughtException', (error) => {
 });
 
 const start = async () => {
+  console.log("[START] initializeDatabase()");
   await initializeDatabase();
+  console.log("[START] initializeDatabase complete");
 
+  console.log("[START] buildApp()");
   const app = buildApp();
+  console.log("[START] buildApp complete");
 
   try {
+    console.log("[START] app.listen()");
     await app.listen({ port, host: '0.0.0.0' });
+    console.log("[START] listening");
     app.log.info(`Server listening on port ${port}`);
   } catch (err) {
     logStartupError(err);
