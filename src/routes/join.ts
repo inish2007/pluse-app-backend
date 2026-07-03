@@ -9,18 +9,12 @@ interface JoinRequest {
   };
 }
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    user?: { id: string; name?: string; email?: string };
-  }
-}
-
 export const joinRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /couple/join/:token
   app.post<JoinRequest>('/couple/join/:token', {
   }, async (request, reply) => {
     // Current joining user ID
-    const joiningUserId = (request.user as any)?.id || '11111111-1111-1111-1111-111111111111'; // Mock Auth ID
+    const joiningUserId = request.user?.userId || '11111111-1111-1111-1111-111111111111'; // Mock Auth ID
     const rawToken = request.params.token;
 
     // If it's a 6-character code, search by short_code. Otherwise, hash it.
@@ -86,7 +80,7 @@ export const joinRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         type: 'PARTNER_CONNECTED',
         partner: {
           id: joiningUserId,
-          name: (request.user as any)?.name || 'Partner'
+          name: 'Partner'
         }
       }).catch(err => {
         app.log.warn('Failed to broadcast partner connection', err);

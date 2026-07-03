@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { withTransaction } from '../db/pool.js';
-import { generateShortCode } from '../utils/crypto.js';
+import { generateSecureToken, generateShortCode, hashToken } from '../utils/crypto.js';
 import { broadcastToUser } from '../websocket/index.js';
 
 interface CreateCodeRequest {
@@ -13,22 +13,40 @@ interface JoinCodeRequest {
   };
 }
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    user?: { id: string; name?: string; email?: string };
-  }
-}
+const sendError = (
+  reply: any,
+  statusCode: number,
+  code: string,
+  message: string
+) => {
+  return reply.status(statusCode).send({
+    success: false,
+    code,
+    message
+  });
+};
 
 export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // POST /couple/code/create - Generate a new couple code (without full invite)
   app.post<CreateCodeRequest>('/couple/code/create', async (request, reply) => {
-    const userId = (request.user as any)?.id;
+    const userId = request.user?.userId;
     if (!userId) {
-      return reply.status(401).send({ error: 'Unauthorized' });
+      return sendError(reply, 401, 'UNAUTHORIZED', 'Unauthorized.');
     }
 
     try {
       const result = await withTransaction(async (client: any) => {
+        const existingCoupleRes = await client.query(
+          `SELECT id FROM couples
+           WHERE user1_id = $1 OR user2_id = $1
+           LIMIT 1`,
+          [userId]
+        );
+
+        if (existingCoupleRes.rows.length > 0) {
+          throw new Error('COUPLE_ALREADY_EXISTS');
+        }
+
         // Create a couple with just user1
         const coupleRes = await client.query(
           'INSERT INTO couples (user1_id) VALUES ($1) RETURNING id',
@@ -38,17 +56,20 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
         // Generate a short code (no full token needed)
         let shortCode = generateShortCode();
-        let attempts = 0;
-        
-        // Ensure uniqueness (very rare collision chance, but safe)
-        while (attempts < 5) {
+
+        // Keep retrying until the generated code is unique.
+        // Collision probability is extremely low, but this makes the flow robust.
+        while (true) {
           const existing = await client.query(
             'SELECT id FROM invites WHERE short_code = $1 AND used = false AND expires_at > NOW()',
             [shortCode]
           );
-          if (existing.rows.length === 0) break;
+
+          if (existing.rows.length === 0) {
+            break;
+          }
+
           shortCode = generateShortCode();
-          attempts++;
         }
 
         // Set expiry (15 minutes)
@@ -56,11 +77,16 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         expiresAt.setMinutes(expiresAt.getMinutes() + 15);
 
         // Insert minimal invite record for tracking
+        const tokenHash = hashToken(generateSecureToken());
+
         await client.query(
           `INSERT INTO invites (token_hash, short_code, creator_id, couple_id, expires_at) 
            VALUES ($1, $2, $3, $4, $5)`,
-          ['COUPLE_CODE_ONLY', shortCode, userId, coupleId, expiresAt.toISOString()]
+          [tokenHash, shortCode, userId, coupleId, expiresAt.toISOString()]
         );
+
+        app.log.info({ userId, coupleId }, 'couple created');
+        app.log.info({ userId, coupleId, shortCode }, 'code generated');
 
         return {
           coupleId,
@@ -76,22 +102,38 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         expires_at: result.expiresAt
       });
     } catch (error) {
-      app.log.error(error);
-      return reply.status(500).send({ error: 'Failed to create couple code' });
+      if (error instanceof Error && error.message === 'COUPLE_ALREADY_EXISTS') {
+        app.log.info({ userId }, 'duplicate couple creation attempt');
+        return sendError(reply, 409, 'COUPLE_ALREADY_EXISTS', 'User is already paired.');
+      }
+
+      app.log.error({ error, userId }, 'Failed to create couple code');
+      return sendError(reply, 500, 'COUPLE_CODE_CREATE_FAILED', 'Failed to create couple code.');
     }
   });
 
   // POST /couple/code/join/:code - Join using couple code
   app.post<JoinCodeRequest>('/couple/code/join/:code', async (request, reply) => {
-    const joiningUserId = (request.user as any)?.id;
+    const joiningUserId = request.user?.userId;
     if (!joiningUserId) {
-      return reply.status(401).send({ error: 'Unauthorized' });
+      return sendError(reply, 401, 'UNAUTHORIZED', 'Unauthorized.');
     }
 
     const code = request.params.code.toUpperCase();
 
     try {
       const result = await withTransaction(async (client: any) => {
+        const existingCoupleRes = await client.query(
+          `SELECT id FROM couples
+           WHERE user1_id = $1 OR user2_id = $1
+           LIMIT 1`,
+          [joiningUserId]
+        );
+
+        if (existingCoupleRes.rows.length > 0) {
+          throw new Error('COUPLE_ALREADY_EXISTS');
+        }
+
         // Look up the code (must be valid and unused)
         const inviteRes = await client.query(
           `SELECT * FROM invites 
@@ -101,6 +143,7 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         );
 
         if (inviteRes.rows.length === 0) {
+          app.log.info({ code }, 'invalid code');
           throw new Error('INVALID_OR_EXPIRED_CODE');
         }
 
@@ -137,6 +180,8 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
           [invite.id]
         );
 
+        app.log.info({ joiningUserId, coupleId: couple.id }, 'join successful');
+
         return {
           coupleId: couple.id,
           user1Id: couple.user1_id,
@@ -149,7 +194,7 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         type: 'PARTNER_CONNECTED',
         partner: {
           id: result.joiningUserId,
-          name: (request.user as any)?.name || 'Partner'
+          name: 'Partner'
         }
       }).catch((err: any) => {
         app.log.warn('Failed to broadcast partner connection', err);
@@ -160,15 +205,25 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         couple_id: result.coupleId
       });
     } catch (error: any) {
-      app.log.error(error);
-      const statusCode = 
-        error.message === 'INVALID_OR_EXPIRED_CODE' ||
-        error.message === 'COUPLE_ALREADY_FULL' ||
-        error.message === 'CANNOT_JOIN_OWN_CODE' ? 400 : 500;
-      
-      return reply.status(statusCode).send({ 
-        error: error.message || 'Failed to join couple' 
-      });
+      if (error.message === 'COUPLE_ALREADY_EXISTS') {
+        app.log.info({ joiningUserId }, 'duplicate join attempt');
+        return sendError(reply, 409, 'COUPLE_ALREADY_EXISTS', 'User is already paired.');
+      }
+
+      if (error.message === 'INVALID_OR_EXPIRED_CODE') {
+        return sendError(reply, 400, 'INVALID_OR_EXPIRED_CODE', 'Invalid or expired code.');
+      }
+
+      if (error.message === 'COUPLE_ALREADY_FULL') {
+        return sendError(reply, 400, 'COUPLE_ALREADY_FULL', 'Couple is already full.');
+      }
+
+      if (error.message === 'CANNOT_JOIN_OWN_CODE') {
+        return sendError(reply, 400, 'CANNOT_JOIN_OWN_CODE', 'You cannot join your own code.');
+      }
+
+      app.log.error({ error, joiningUserId }, 'Failed to join couple');
+      return sendError(reply, 500, 'COUPLE_CODE_JOIN_FAILED', 'Failed to join couple.');
     }
   });
 
@@ -185,28 +240,28 @@ export const coupleCodeRoutes: FastifyPluginAsync = async (app: FastifyInstance)
         );
 
         if (inviteRes.rows.length === 0) {
+          app.log.info({ code }, 'invalid code');
           return { valid: false };
         }
 
         const invite = inviteRes.rows[0];
         const coupleRes = await client.query(
-          'SELECT * FROM couples WHERE id = $1',
+          'SELECT user2_id FROM couples WHERE id = $1',
           [invite.couple_id]
         );
 
         const couple = coupleRes.rows[0];
         return {
           valid: true,
-          couple_id: couple.id,
-          creator_id: invite.creator_id,
+          expires_at: invite.expires_at,
           is_full: !!couple.user2_id
         };
       });
 
       return reply.send(result);
     } catch (error) {
-      app.log.error(error);
-      return reply.status(500).send({ error: 'Validation failed' });
+      app.log.error({ error }, 'Validation failed');
+      return sendError(reply, 500, 'COUPLE_CODE_VALIDATE_FAILED', 'Validation failed.');
     }
   });
 };

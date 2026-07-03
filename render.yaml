@@ -2,7 +2,7 @@ services:
   - type: web
     name: pluse-app-backend
     env: node
-    buildCommand: npm install
+    buildCommand: npm install && npm run build
     startCommand: npm start
     plan: free
     autoDeploy: true

@@ -1,8 +1,22 @@
-import { buildApp } from './app.js';
-import { initializeDatabase } from './db/pool.js';
-import * as dotenv from 'dotenv';
 
+console.log("1 - server.ts loaded");
+
+import * as dotenv from "dotenv";
 dotenv.config();
+
+console.log("2 - dotenv loaded");
+
+import { initializeDatabase } from "./db/pool.js";
+
+console.log("3 - db imported");
+
+import { buildApp } from "./app.js";
+
+console.log("4 - app imported");
+
+console.log("5 - starting...");
+
+
 
 const requiredEnv = ['DATABASE_URL', 'JWT_SECRET'];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
