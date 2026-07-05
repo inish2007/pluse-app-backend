@@ -53,6 +53,9 @@ export const verifyBackendJwt = (token: string): BackendJwtPayload => {
   try {
     const decoded = jwt.verify(token, getJwtSecret()) as BackendJwtPayload;
 
+    console.log("========== JWT VERIFIED ==========");
+    console.log(decoded);
+
     if (
       !decoded ||
       typeof decoded.userId !== 'string' ||
@@ -64,6 +67,9 @@ export const verifyBackendJwt = (token: string): BackendJwtPayload => {
 
     return decoded;
   } catch (error) {
+    console.error("========== JWT VERIFY ERROR ==========");
+    console.error(error);
+
     if (error instanceof JwtVerificationError) {
       throw error;
     }
