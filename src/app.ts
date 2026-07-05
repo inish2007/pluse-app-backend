@@ -15,6 +15,12 @@ import { disconnectRoutes } from './routes/disconnect.js';
 
 export const buildApp = () => {
   const app = fastify({ logger: true });
+  app.addHook("onRequest", async (request) => {
+    console.log("========== REQUEST ==========");
+    console.log("METHOD:", request.method);
+    console.log("URL:", request.url);
+    console.log("AUTH:", request.headers.authorization ?? "NO AUTH HEADER");
+  });
 
   // Rate Limiting for Security Hardening
   app.register(rateLimit, {
