@@ -11,6 +11,7 @@ import { initializeDatabase } from "./db/pool.js";
 console.log("3 - db imported");
 
 import { buildApp } from "./app.js";
+import { ensureFirebaseAdminInitialized } from "./firebase/admin.js";
 
 console.log("4 - app imported");
 
@@ -49,15 +50,19 @@ process.on('uncaughtException', (error) => {
 });
 
 const start = async () => {
-  console.log("[START] initializeDatabase()");
-  await initializeDatabase();
-  console.log("[START] initializeDatabase complete");
-
-  console.log("[START] buildApp()");
-  const app = buildApp();
-  console.log("[START] buildApp complete");
-
   try {
+    console.log("[START] ensureFirebaseAdminInitialized()");
+    ensureFirebaseAdminInitialized();
+    console.log("[START] Firebase Admin initialization verified");
+
+    console.log("[START] initializeDatabase()");
+    await initializeDatabase();
+    console.log("[START] initializeDatabase complete");
+
+    console.log("[START] buildApp()");
+    const app = buildApp();
+    console.log("[START] buildApp complete");
+
     console.log("[START] app.listen()");
     await app.listen({ port, host: '0.0.0.0' });
     console.log("[START] listening");

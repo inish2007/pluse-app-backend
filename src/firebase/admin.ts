@@ -20,10 +20,22 @@ try {
   firebaseMessaging = getMessaging(firebaseApp);
   console.log('[Firebase Admin] initialized successfully.');
 } catch (error) {
-  console.warn('[Firebase Admin] initialization failed:', error);
+  console.error('[Firebase Admin] initialization failed:', error);
   firebaseApp = null;
   firebaseAuth = null;
   firebaseMessaging = null;
 }
+
+export const ensureFirebaseAdminInitialized = (): { app: App; auth: Auth; messaging: Messaging } => {
+  if (!firebaseApp || !firebaseAuth || !firebaseMessaging) {
+    throw new Error('Firebase Admin initialization failed. Startup cannot continue.');
+  }
+
+  return {
+    app: firebaseApp,
+    auth: firebaseAuth,
+    messaging: firebaseMessaging
+  };
+};
 
 export { firebaseApp, firebaseAuth, firebaseMessaging };

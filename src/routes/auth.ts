@@ -23,15 +23,16 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     if (!firebaseAuth) {
-      app.log.warn('Firebase Admin auth is not initialized. Cannot verify token.');
+      app.log.warn({ reason: 'firebase_admin_unavailable' }, 'Firebase Admin auth is not initialized. Cannot verify token.');
       return sendError(reply, 503, 'FIREBASE_AUTH_UNAVAILABLE', 'Firebase auth not available.');
     }
 
     let decodedToken;
     try {
       decodedToken = await firebaseAuth.verifyIdToken(firebaseToken);
+      app.log.info({ firebaseUid: decodedToken.uid }, 'Firebase verification succeeded');
     } catch (error) {
-      app.log.warn({ error }, 'Firebase token verification failed');
+      app.log.warn({ error, reason: 'invalid_firebase_token' }, 'Firebase token verification failed');
       return sendError(reply, 401, 'INVALID_FIREBASE_TOKEN', 'Invalid Firebase token.');
     }
 
@@ -40,12 +41,19 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     try {
       const user = await upsertFirebaseUser(decodedToken.uid, email, displayName);
+      app.log.info({ firebaseUid: decodedToken.uid, userId: user.id }, 'Firebase user synchronized');
+
       const coupleId = await findCurrentCoupleId(user.id);
+      app.log.info({ userId: user.id, firebaseUid: user.firebase_uid, coupleId }, 'JWT generation requested');
+
       const token = generateBackendToken({
         userId: user.id,
         firebaseUid: user.firebase_uid,
         coupleId
       });
+
+      app.log.info({ userId: user.id, firebaseUid: user.firebase_uid, coupleId }, 'JWT generated');
+      app.log.info({ userId: user.id, firebaseUid: user.firebase_uid, coupleId }, 'Login success');
 
       return reply.send({
         success: true,
@@ -61,7 +69,7 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       });
     } catch (error) {
-      app.log.error({ error }, 'Failed to synchronize Firebase user or create backend token');
+      app.log.error({ error, firebaseUid: decodedToken?.uid, reason: 'login_failed' }, 'Login failed');
       return sendError(reply, 500, 'AUTHENTICATION_FAILED', 'Failed to authenticate user.');
     }
   });
